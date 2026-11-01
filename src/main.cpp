@@ -5,7 +5,8 @@
 //                [--refs N] [--scenecut 0|1] [--bframes N] [--bq D] [--aq D] [--pyramid 0|1] [--progress] [--psnr]
 //                [--tune film|animation|still]
 //   -i - reads the y4m from standard input (e.g. ffmpeg ... -f yuv4mpegpipe - | celv2enc -i - ...).
-//   --progress prints "progress frame=N" (N from 1) on stderr after each coded frame is written.
+//   --progress prints "progress frame=N" (N from 1) on stderr after each coded frame is written
+//   (and flushed to the output file).
 //   --psnr prints "psnr: P" at the end: the mean over the shown frames of their luma PSNR against
 //   the source (at most 99 dB); then "psnr uv: U V", the same for chroma.
 //   --keyint N: at most N frames from one keyframe to the next (0: no limit); --scenecut 1 (the
@@ -561,6 +562,8 @@ int main(int argc, char** argv) {
           throw std::runtime_error("writing " + a.recon + " failed (disk full?)");
         n++;
         if (a.progress) {
+          ivf.flush();  // the frame is in the file when its line appears (scripts/bench_time.py)
+          if (recon) std::fflush(recon);
           std::fprintf(stderr, "progress frame=%d\n", n);
           std::fflush(stderr);
         }

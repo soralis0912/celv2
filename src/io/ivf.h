@@ -10,6 +10,7 @@ class IvfWriter {
   IvfWriter(const std::string& path, int w, int h, int fps_num, int fps_den);
   ~IvfWriter();
   void write(const std::vector<uint8_t>& tu, int64_t pts);
+  void flush();  // to the file, so a reader sees every frame written so far
   void close();  // rewrites the frame count in the header
 
  private:

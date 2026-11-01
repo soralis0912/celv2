@@ -36,6 +36,11 @@ void IvfWriter::write(const std::vector<uint8_t>& tu, int64_t pts) {
   frames_++;
 }
 
+void IvfWriter::flush() {
+  out_.flush();
+  if (out_.fail()) throw std::runtime_error("writing the IVF file failed (disk full?)");
+}
+
 void IvfWriter::close() {
   out_.seekp(24);
   put_le(out_, frames_, 4);
