@@ -1,11 +1,12 @@
 # Vulkan decision engine: the Vulkan headers and slangc, from the LunarG SDK ($VULKAN_SDK), the PATH,
 # or portable copies unpacked under %LOCALAPPDATA%\bin (Vulkan-Headers-<version>, slang-<version>).
+# On Linux: the SDK, or libvulkan-dev and slangc on the PATH.
 # Without them, CELV2_VULKAN is OFF and nothing Vulkan is built. No vulkan-1.lib is needed:
-# vk_context.cpp opens the system loader with LoadLibrary.
+# vk_context.cpp opens the system loader with LoadLibrary (dlopen on Linux).
 file(GLOB _vk_headers "$ENV{LOCALAPPDATA}/bin/Vulkan-Headers-*/include")
 file(GLOB _vk_slang "$ENV{LOCALAPPDATA}/bin/slang-*/bin")
-find_path(CELV2_VK_INCLUDE vulkan/vulkan.h HINTS "$ENV{VULKAN_SDK}/Include" ${_vk_headers})
-find_program(CELV2_SLANGC slangc HINTS "$ENV{VULKAN_SDK}/Bin" ${_vk_slang})
+find_path(CELV2_VK_INCLUDE vulkan/vulkan.h HINTS "$ENV{VULKAN_SDK}/Include" "$ENV{VULKAN_SDK}/include" ${_vk_headers})
+find_program(CELV2_SLANGC slangc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin" ${_vk_slang})
 if(CELV2_VK_INCLUDE AND CELV2_SLANGC)
   set(CELV2_VULKAN ON)
   message(STATUS "Vulkan: headers ${CELV2_VK_INCLUDE}, slangc ${CELV2_SLANGC}")

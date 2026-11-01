@@ -58,8 +58,12 @@ static int race_child() {
 
 static int cold_cache_threads_agree(const char* self) {
   int bad = 0;
-  for (int i = 0; i < 40; i++)  // cmd.exe strips one pair of outer quotes, hence the extra pair
-    bad += std::system(("\"\"" + std::string(self) + "\" --race-child\"").c_str()) != 0;
+#ifdef _WIN32
+  const std::string cmd = "\"\"" + std::string(self) + "\" --race-child\"";  // cmd.exe strips one pair of outer quotes
+#else
+  const std::string cmd = "\"" + std::string(self) + "\" --race-child";
+#endif
+  for (int i = 0; i < 40; i++) bad += std::system(cmd.c_str()) != 0;
   if (bad) std::fprintf(stderr, "cold-cache race: %d of 40 processes disagreed\n", bad);
   CHECK_EQ(bad, 0);
   return 0;

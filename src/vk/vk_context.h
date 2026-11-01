@@ -1,7 +1,7 @@
 // A Vulkan compute device for the decision kernels (plan step 5): device-local buffers that the
 // kernels reach by device address (as the CUDA kernels take pointers), compute pipelines from
 // embedded SPIR-V with push constants only, dispatches run at once or recorded in batches. The
-// loader (vulkan-1.dll) is opened at run time, so celv2 links and runs without Vulkan installed.
+// loader (vulkan-1.dll, libvulkan.so.1) is opened at run time, so celv2 links and runs without Vulkan installed.
 #pragma once
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>

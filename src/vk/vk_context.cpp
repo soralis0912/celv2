@@ -1,6 +1,10 @@
 #include "vk/vk_context.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -23,8 +27,23 @@ namespace celv2::vk {
   X(vkQueueSubmit) X(vkDeviceWaitIdle) X(vkCreateSemaphore) X(vkDestroySemaphore) X(vkWaitSemaphores)     \
   X(vkGetSemaphoreCounterValue) X(vkCmdPipelineBarrier) X(vkCmdUpdateBuffer)
 
+#ifdef _WIN32
+using Lib = HMODULE;
+static Lib open_loader() { return LoadLibraryA("vulkan-1.dll"); }
+static void* loader_sym(Lib l, const char* name) { return reinterpret_cast<void*>(GetProcAddress(l, name)); }
+static void close_loader(Lib l) { FreeLibrary(l); }
+#else
+using Lib = void*;
+static Lib open_loader() {
+  Lib l = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+  return l ? l : dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+}
+static void* loader_sym(Lib l, const char* name) { return dlsym(l, name); }
+static void close_loader(Lib l) { dlclose(l); }
+#endif
+
 struct Fns {
-  HMODULE dll = nullptr;
+  Lib dll = nullptr;
   PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
   PFN_vkCreateInstance vkCreateInstance = nullptr;
 #define CELV2_VK_DECL(name) PFN_##name name = nullptr;
@@ -32,7 +51,7 @@ struct Fns {
   CELV2_VK_DEVICE_FNS(CELV2_VK_DECL)
 #undef CELV2_VK_DECL
   ~Fns() {
-    if (dll) FreeLibrary(dll);
+    if (dll) close_loader(dll);
   }
 };
 
@@ -45,9 +64,9 @@ void ok(VkResult r, const char* what) {
 // The loader and an instance, with the instance functions; nullptr without a loader.
 std::unique_ptr<Fns> open_instance(VkInstance* inst) {
   auto f = std::make_unique<Fns>();
-  f->dll = LoadLibraryA("vulkan-1.dll");
+  f->dll = open_loader();
   if (!f->dll) return nullptr;
-  f->vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(f->dll, "vkGetInstanceProcAddr"));
+  f->vkGetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(loader_sym(f->dll, "vkGetInstanceProcAddr"));
   if (!f->vkGetInstanceProcAddr) return nullptr;
   f->vkCreateInstance = reinterpret_cast<PFN_vkCreateInstance>(f->vkGetInstanceProcAddr(nullptr, "vkCreateInstance"));
   VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -93,7 +112,7 @@ std::vector<std::string> Context::devices() {
 
 Context::Context(int index) {
   f_ = open_instance(&inst_);
-  if (!f_) throw std::runtime_error("Vulkan: no loader (vulkan-1.dll) or no instance");
+  if (!f_) throw std::runtime_error("Vulkan: no loader (vulkan-1.dll, libvulkan.so.1) or no instance");
   const std::vector<VkPhysicalDevice> pds = discrete(*f_, inst_);
   if (index < 0 || index >= static_cast<int>(pds.size())) {
     f_->vkDestroyInstance(inst_, nullptr);

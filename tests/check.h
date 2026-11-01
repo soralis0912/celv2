@@ -2,6 +2,13 @@
 #pragma once
 #include <cstdio>
 #include <iostream>
+#ifndef _WIN32
+#include <cstdlib>
+// MSVC's _putenv_s, for the tests: an empty value removes the variable.
+inline int _putenv_s(const char* name, const char* value) {
+  return *value ? setenv(name, value, 1) : unsetenv(name);
+}
+#endif
 
 #define CHECK(cond)                                                        \
   do {                                                                     \

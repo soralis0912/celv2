@@ -6,6 +6,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 #include "bitstream/obu.h"
 #include "check.h"
@@ -17,13 +20,26 @@
 
 namespace fs = std::filesystem;
 
+// std::system's result as the command's exit code (POSIX returns a wait status).
+static int exit_code(int rc) {
+#ifdef _WIN32
+  return rc;
+#else
+  return rc != -1 && WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
+#endif
+}
+
 // Runs celv2enc with `args`; returns the exit code and fills `err` with its stderr.
 static int run_cli(const std::string& args, std::string& err) {
   const fs::path errfile = fs::temp_directory_path() / "celv2_cli_stderr.txt";
+#ifdef _WIN32
   // cmd.exe strips one pair of outer quotes, hence the extra pair.
   const std::string cmd =
       "\"\"" CELV2ENC_PATH "\" " + args + " 2> \"" + errfile.string() + "\"\"";
-  const int rc = std::system(cmd.c_str());
+#else
+  const std::string cmd = "\"" CELV2ENC_PATH "\" " + args + " 2> \"" + errfile.string() + "\"";
+#endif
+  const int rc = exit_code(std::system(cmd.c_str()));
   std::ifstream in(errfile);
   err.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
   return rc;
@@ -149,7 +165,7 @@ static int cli_hdr_signalling() {
   const fs::path ivf = fs::temp_directory_path() / "celv2_cli_hdr.ivf";
   std::string err;
   CHECK_EQ(run_cli("-i \"" + y4m.string() + "\" -o \"" + ivf.string() +
-                       "\" --colour pq --mdcv G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)"
+                       "\" --colour pq --mdcv \"G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)\""
                        " --cll 1000,400",
                    err),
            0);
@@ -635,8 +651,14 @@ static int cli_device_cpu_matches_gpu() {
   std::string err;
   CHECK_EQ(run_cli("-i \"" + y4m.string() + "\" -o \"" + cpu_ivf.string() + "\" --device cpu", err), 0);
   CHECK(err.find("decisions on CPU") != std::string::npos);
+#ifdef CELV2_HAVE_CUDA
   CHECK_EQ(run_cli("-i \"" + y4m.string() + "\" -o \"" + kDevGpuIvf.string() + "\" --device gpu", err), 0);
   CHECK(err.find("decisions on GPU") != std::string::npos);
+#else
+  // Built without CUDA: the CPU's bytes stand in for the GPU's in the tests below.
+  std::puts("built without CUDA: --device gpu not run");
+  fs::copy_file(cpu_ivf, kDevGpuIvf, fs::copy_options::overwrite_existing);
+#endif
   const std::string cpu = read_bytes(cpu_ivf);
   CHECK(!cpu.empty());
   CHECK(cpu == read_bytes(kDevGpuIvf));
@@ -676,12 +698,18 @@ static int cli_device_gpu_without_gpu_fails() {
   return 0;
 }
 
-// Runs `type <y4m> | celv2enc -i - <args>` through cmd.exe (whose pipes pass bytes unchanged).
+// Runs `type <y4m> | celv2enc -i - <args>` through cmd.exe (whose pipes pass bytes unchanged),
+// `cat` through sh elsewhere.
 static int run_cli_stdin(const fs::path& y4m, const std::string& args, std::string& err) {
   const fs::path errfile = fs::temp_directory_path() / "celv2_cli_stderr.txt";
+#ifdef _WIN32
   const std::string cmd = "\"type \"" + y4m.string() + "\" | \"" CELV2ENC_PATH "\" -i - " + args +
                           " 2> \"" + errfile.string() + "\"\"";
-  const int rc = std::system(cmd.c_str());
+#else
+  const std::string cmd = "cat \"" + y4m.string() + "\" | \"" CELV2ENC_PATH "\" -i - " + args +
+                          " 2> \"" + errfile.string() + "\"";
+#endif
+  const int rc = exit_code(std::system(cmd.c_str()));
   std::ifstream in(errfile);
   err.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
   return rc;

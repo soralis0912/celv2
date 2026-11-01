@@ -1,15 +1,41 @@
 cmake_minimum_required(VERSION 3.24)
-project(CelV2 LANGUAGES C CXX CUDA)
+project(CelV2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 17)
-# Turing (75), Ampere (80, 86), Ada (89), Hopper (90): SASS only; Blackwell (120): SASS + PTX (forward-compatible).
-set(CMAKE_CUDA_ARCHITECTURES 75-real 80-real 86-real 89-real 90-real 120)
-add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
-# 8-wide float loops in fwd_dct; MSVC does not contract to FMA under /fp:precise, so results match SSE2.
-add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/arch:AVX2>")
-add_compile_definitions(NOMINMAX)  # AVM headers pull in windows.h
+
+# CUDA engine: on when a CUDA compiler is found (always on Windows, as before). Without it,
+# src/gpu/engine_stub.cpp stands in for GpuEngine and decisions run on Vulkan or the CPU.
+include(CheckLanguage)
+check_language(CUDA)
+if(WIN32 OR CMAKE_CUDA_COMPILER)
+  set(_cuda_default ON)
+else()
+  set(_cuda_default OFF)
+endif()
+option(CELV2_CUDA "Build the CUDA decision engine" ${_cuda_default})
+if(CELV2_CUDA)
+  enable_language(CUDA)
+  set(CMAKE_CUDA_STANDARD 17)
+  # Turing (75), Ampere (80, 86), Ada (89), Hopper (90): SASS only; Blackwell (120): SASS + PTX (forward-compatible).
+  set(CMAKE_CUDA_ARCHITECTURES 75-real 80-real 86-real 89-real 90-real 120)
+endif()
+message(STATUS "CUDA engine: ${CELV2_CUDA}")
+
+if(MSVC)
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
+  # 8-wide float loops in fwd_dct; MSVC does not contract to FMA under /fp:precise, so results match SSE2.
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/arch:AVX2>")
+  add_compile_definitions(NOMINMAX)  # AVM headers pull in windows.h
+else()
+  # No contraction to FMA, for the same float results as the MSVC build.
+  # MSVC's /arch:AVX2 also takes BMI1/2, LZCNT and FMA (quant.cpp uses _tzcnt_u32); FMA only where
+  # the code asks for it.
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-mavx2;-mbmi;-mbmi2;-mlzcnt;-mfma;-mf16c;-ffp-contract=off>")
+  # Build paths out of __FILE__ in the binaries, as the MSVC build does.
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-ffile-prefix-map=${CMAKE_SOURCE_DIR}=celv2>")
+endif()
+find_package(Threads REQUIRED)
 
 include(cmake/avm.cmake)
 
@@ -38,12 +64,16 @@ add_library(celv2_core STATIC
   src/gpu/decision_map.cpp
   ${AVM_ROOT}/common/md5_utils.c)
 target_include_directories(celv2_core PUBLIC src)
-target_link_libraries(celv2_core PUBLIC avm)
+target_link_libraries(celv2_core PUBLIC avm Threads::Threads)
 
 # GPU decision engine (CUDA). kernels_ref.cpp is the CPU reference used by tests.
+if(CELV2_CUDA)
+  set(CELV2_GPU_ENGINE src/gpu/engine.cu src/gpu/kernels.cu)
+else()
+  set(CELV2_GPU_ENGINE src/gpu/engine_stub.cpp)
+endif()
 add_library(celv2_gpu STATIC
-  src/gpu/engine.cu
-  src/gpu/kernels.cu
+  ${CELV2_GPU_ENGINE}
   src/gpu/kernels_ref.cpp
   src/gpu/cpu_engine.cpp
   src/pipeline.cpp
@@ -55,15 +85,21 @@ include(cmake/vulkan.cmake)
 if(CELV2_VULKAN)
   add_library(celv2_vk STATIC src/vk/vk_context.cpp src/vk/vk_kernels.cpp src/vk/vk_engine.cpp)
   target_include_directories(celv2_vk PUBLIC src "${CELV2_VK_INCLUDE}")
-  target_link_libraries(celv2_vk PUBLIC celv2_core)
+  target_link_libraries(celv2_vk PUBLIC celv2_core ${CMAKE_DL_LIBS})
   celv2_vk_shaders(celv2_vk downsample subpel me satd cost finalize)
   target_link_libraries(celv2_gpu PUBLIC celv2_vk)
   target_compile_definitions(celv2_gpu PRIVATE CELV2_HAVE_VULKAN)
-  add_executable(engine_bench tools/engine_bench.cpp)  # the decision engines alone, CUDA against Vulkan
-  target_link_libraries(engine_bench PRIVATE celv2_gpu celv2_vk)
+  if(CELV2_CUDA)
+    add_executable(engine_bench tools/engine_bench.cpp)  # the decision engines alone, CUDA against Vulkan
+    target_link_libraries(engine_bench PRIVATE celv2_gpu celv2_vk)
+  endif()
 endif()
 
-add_executable(celv2enc src/main.cpp src/utf8.manifest)
+if(WIN32)
+  add_executable(celv2enc src/main.cpp src/utf8.manifest)
+else()
+  add_executable(celv2enc src/main.cpp)
+endif()
 target_link_libraries(celv2enc PRIVATE celv2_core celv2_gpu)
 
 enable_testing()
@@ -81,11 +117,13 @@ celv2_test(test_io)
 celv2_test(test_seq_header)
 celv2_test(test_keyframe_skip)
 celv2_test(test_keyframe_residual)
-celv2_test(test_gpu_intra)
-celv2_test(test_keyframe_gpu)
+if(CELV2_CUDA)  # these run the CUDA engine
+  celv2_test(test_gpu_intra)
+  celv2_test(test_keyframe_gpu)
+  celv2_test(test_gpu_me)
+  celv2_test(test_ippp)
+endif()
 celv2_test(test_inter_header)
-celv2_test(test_gpu_me)
-celv2_test(test_ippp)
 celv2_test(test_pipeline_sync)
 celv2_test(test_random_decisions)
 celv2_test(test_transform)
@@ -99,16 +137,21 @@ celv2_test(test_ccso_apply)
 celv2_test(test_tpl)
 celv2_test(test_threads)
 celv2_test(test_size_control)
-if(CELV2_VULKAN)
+if(CELV2_VULKAN AND CELV2_CUDA)
   celv2_test(test_vk_kernels)
   # The cost and finalize kernels are checked against the CUDA ones.
   find_package(CUDAToolkit REQUIRED)
   target_link_libraries(test_vk_kernels PRIVATE celv2_vk CUDA::cudart_static)
 endif()
 target_compile_definitions(test_cli PRIVATE CELV2ENC_PATH="$<TARGET_FILE:celv2enc>")
+if(CELV2_CUDA)
+  target_compile_definitions(test_cli PRIVATE CELV2_HAVE_CUDA)
+endif()
 add_dependencies(test_cli celv2enc)
 add_test(NAME no_encoder_includes
   COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${CMAKE_SOURCE_DIR}/src -P ${CMAKE_SOURCE_DIR}/tests/no_encoder_includes.cmake)
-add_test(NAME gui_tests
-  COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/gui/test.ps1)
-set_tests_properties(gui_tests PROPERTIES TIMEOUT 300)
+if(WIN32)  # the GUI is WinForms
+  add_test(NAME gui_tests
+    COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File ${CMAKE_SOURCE_DIR}/gui/test.ps1)
+  set_tests_properties(gui_tests PROPERTIES TIMEOUT 300)
+endif()

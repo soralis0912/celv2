@@ -66,6 +66,30 @@ powershell -File scripts\build.ps1
 powershell -File scripts\test.ps1
 ```
 
+## Linux
+
+The encoder (not the GUI) also builds on Linux x86-64 with GCC or Clang. CUDA is optional:
+without nvcc the build leaves the CUDA engine out and decides on Vulkan (with the Vulkan headers
+and `slangc`) or on the CPU. The output is the same bytes either way.
+
+- CMake 3.24 or newer, Ninja, Clang (for AVM), NASM; a CPU with AVX2 (the build uses `-mavx2`)
+- Optional: the CUDA toolkit 13.x (`nvcc` on the PATH), the Vulkan SDK or `libvulkan-dev` and
+  `slangc`
+- ffmpeg, for the scripts
+
+```sh
+sudo apt install build-essential clang cmake ninja-build nasm ffmpeg   # Ubuntu 24.04
+git clone --branch v1.0.0 https://github.com/AOMediaCodec/avm.git ~/avm # commit 966a7d7
+export AVM_ROOT=~/avm         # optional; defaults to ~/avm
+scripts/build_avm_lib.sh      # once: AVM as a static library, plus avmenc and avmdec
+scripts/build.sh              # CELV2_CMAKE_ARGS=-DCELV2_CUDA=OFF leaves CUDA out
+scripts/test.sh               # the CUDA-only tests are not built without CUDA
+```
+
+`scripts/bench_time.py` codes for a fixed time (`--minutes 1`, `--minutes 10`) and reports the
+frames written, for machines where a whole clip takes too long; see
+[docs/linux-benchmark_ja.md](docs/linux-benchmark_ja.md) (Japanese).
+
 ## Usage
 
 ```powershell
